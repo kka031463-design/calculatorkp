@@ -1,0 +1,38 @@
+name: Sync with upstream repository
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Every 6 hours
+  workflow_dispatch:  # Manual trigger
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/yansan0000-netizen/calculatorkp.git || true
+          git fetch upstream
+
+      - name: Merge upstream changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git merge upstream/main --allow-unrelated-histories --no-edit || {
+            echo "Merge conflict detected. Creating PR instead."
+            git merge --abort
+            git checkout -b sync/upstream-$(date +%Y%m%d%H%M%S)
+            git merge upstream/main --allow-unrelated-histories --no-edit || true
+            git add -A
+            git commit -m "chore: sync with upstream (conflicts need resolution)" || true
+            git push origin HEAD
+            exit 0
+          }
+
+      - name: Push changes
+        run: git push origin HEAD
