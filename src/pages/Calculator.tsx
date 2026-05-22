@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useCalculator } from "@/context/CalculatorContext";
-import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import ProductSelection from "@/components/calculator/ProductSelection";
 import DimensionsForm from "@/components/calculator/DimensionsForm";
@@ -8,7 +7,7 @@ import MetalForm from "@/components/calculator/MetalForm";
 import AdditionalOptions from "@/components/calculator/AdditionalOptions";
 import CostSummary from "@/components/calculator/CostSummary";
 import { Link } from "react-router-dom";
-import { Settings, FileDown, Building2, MessageSquare, History, Cylinder } from "lucide-react";
+import { Settings, FileDown, Building2, History, Cylinder } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { generateCommercialPdf } from "@/utils/generatePdf";
 import { toast } from "@/hooks/use-toast";
@@ -16,20 +15,20 @@ import { saveToHistory } from "@/pages/History";
 import { motion } from "framer-motion";
 import {
   calcCapPrice, calcBoxPrice, calcFlashingPrice, calcAddonPrice,
-  capModels, boxModels, flashingModels, addonOptions, formatPrice,
+  capModels, boxModels, flashingModels,
 } from "@/data/calculatorData";
 
 import type { CompanyInfo } from "@/utils/generatePdf";
 
 const Calculator = () => {
   const calc = useCalculator();
-  const { comment, setComment } = calc;
   const [pdfLoading, setPdfLoading] = useState(false);
-  const [company, setCompany] = useState<CompanyInfo>({
-    companyName: "",
-    contactPerson: "",
-    phone: "",
-    email: "",
+  const [company, setCompany] = useState<CompanyInfo>(() => {
+    try {
+      const stored = sessionStorage.getItem("pipe_edit_company");
+      if (stored) { sessionStorage.removeItem("pipe_edit_company"); return JSON.parse(stored); }
+    } catch {}
+    return { companyName: "", contactPerson: "", phone: "", email: "" };
   });
 
   const computeTotal = () => {
@@ -41,11 +40,14 @@ const Calculator = () => {
       const d = itemDiscounts[key] || 0;
       total += price * (1 - d / 100);
     };
-    if (capModel !== "custom") addItem("cap", calcCapPrice(capModel, X, Y, metalPrice));
-    if (boxModel !== "none") addItem("box", calcBoxPrice(boxModel, X, Y, H, metalPrice));
-    if (flashingModel !== "none") addItem("flashing", calcFlashingPrice(flashingModel, X, Y, metalPrice));
+    if (capModel !== "custom" && capModels.some(c => c.id === capModel)) addItem("cap", calcCapPrice(capModel, X, Y, metalPrice));
+    else addItem("cap", calc.customItemPrices.cap || 0);
+    if (boxModel !== "none" && boxModels.some(b => b.id === boxModel)) addItem("box", calcBoxPrice(boxModel, X, Y, H, metalPrice));
+    else if (boxModel !== "none") addItem("box", calc.customItemPrices.box || 0);
+    if (flashingModel !== "none" && flashingModels.some(f => f.id === flashingModel)) addItem("flashing", calcFlashingPrice(flashingModel, X, Y, metalPrice));
+    else if (flashingModel !== "none") addItem("flashing", calc.customItemPrices.flashing || 0);
     selectedAddons.forEach(id => {
-      addItem(`addon_${id}`, calcAddonPrice(id, capModel, X, Y, H, metalPrice, meshPrice, stainlessPrice, zincPrice065));
+      addItem(`addon_${id}`, calcAddonPrice(id, capModel, X, Y, H, metalPrice, meshPrice, stainlessPrice, zincPrice065, calc.gasClassicPrice, calc.gasModernPrice));
     });
     return Math.round(total * (1 - discount / 100));
   };
@@ -64,12 +66,15 @@ const Calculator = () => {
         meshPrice: calc.meshPrice,
         stainlessPrice: calc.stainlessPrice,
         zincPrice065: calc.zincPrice065,
+        gasClassicPrice: calc.gasClassicPrice,
+        gasModernPrice: calc.gasModernPrice,
         capModel: calc.capModel,
         boxModel: calc.boxModel,
         flashingModel: calc.flashingModel,
         selectedAddons: calc.selectedAddons,
         discount: calc.discount,
         itemDiscounts: calc.itemDiscounts,
+        customItemPrices: calc.customItemPrices,
         comment: calc.comment,
         company,
         companyDefaults: calc.companyDefaults,
@@ -120,7 +125,7 @@ const Calculator = () => {
               </div>
               <div>
                 <h1 className="text-2xl font-extrabold tracking-tight text-primary-foreground">
-                  Калькулятор системы PIPE
+                  Калькулятор
                 </h1>
                 <p className="text-xs text-primary-foreground/50 font-medium">Расчёт стоимости изделий</p>
               </div>
@@ -145,6 +150,7 @@ const Calculator = () => {
         </div>
       </motion.div>
 
+      {/* Login modal */}
       {/* Main Content */}
       <div className="container max-w-5xl py-8 space-y-6">
         {/* Dimensions + Metal */}
@@ -180,12 +186,10 @@ const Calculator = () => {
           <AdditionalOptions />
         </motion.div>
 
-        {/* Comment field removed */}
-
         {/* Cost Summary */}
         <CostSummary />
 
-        {/* Company Info */}
+        {/* Company Info + PDF Export — available to all */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -212,7 +216,6 @@ const Calculator = () => {
           </div>
         </motion.div>
 
-        {/* PDF Export */}
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}

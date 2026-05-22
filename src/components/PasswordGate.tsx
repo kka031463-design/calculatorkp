@@ -13,6 +13,19 @@ export function setPassword(newPass: string) {
   localStorage.setItem("pipe_password", newPass);
 }
 
+export function useIsAuthorized(): boolean {
+  return sessionStorage.getItem("pipe_auth") === "1";
+}
+
+export function authorize(password: string): boolean {
+  if (password === getPassword()) {
+    sessionStorage.setItem("pipe_auth", "1");
+    return true;
+  }
+  return false;
+}
+
+// Shown inline (e.g. in a modal/dialog) — wraps protected content
 const PasswordGate = ({ children }: { children: React.ReactNode }) => {
   const [authorized, setAuthorized] = useState(() => sessionStorage.getItem("pipe_auth") === "1");
   const [value, setValue] = useState("");
@@ -22,8 +35,7 @@ const PasswordGate = ({ children }: { children: React.ReactNode }) => {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (value === getPassword()) {
-      sessionStorage.setItem("pipe_auth", "1");
+    if (authorize(value)) {
       setAuthorized(true);
     } else {
       setError(true);
@@ -36,7 +48,7 @@ const PasswordGate = ({ children }: { children: React.ReactNode }) => {
         <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center mx-auto">
           <Lock className="w-6 h-6 text-primary" />
         </div>
-        <h2 className="text-lg font-bold text-foreground">Введите пароль</h2>
+        <h2 className="text-lg font-bold text-foreground">Вход для администратора</h2>
         <Input
           type="password"
           placeholder="Пароль"

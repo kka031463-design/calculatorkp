@@ -17,7 +17,15 @@ function getCustomNames(): Record<string, Record<string, { name: string; descrip
 
 function resolveModelName(type: "cap" | "box" | "flashing", id: string, fallback: string): string {
   const names = getCustomNames();
-  return names[type]?.[id]?.name ?? fallback;
+  const customName = names[type]?.[id]?.name;
+  if (customName) return customName;
+  try {
+    const saved = localStorage.getItem("pipe_custom_models");
+    const customModels = saved ? JSON.parse(saved) : {};
+    return customModels[type]?.find((m: { id: string; name: string }) => m.id === id)?.name ?? fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 function resolveProductImage(type: "cap" | "box" | "flashing", id: string): string {
@@ -30,6 +38,14 @@ function resolveProductImage(type: "cap" | "box" | "flashing", id: string): stri
   return imgs[type]?.[id] || defaults[type]?.[id] || "";
 }
 
+function getNextDocNumber(): number {
+  try {
+    const n = parseInt(localStorage.getItem("pipe_doc_counter") || "0", 10);
+    const next = n + 1;
+    localStorage.setItem("pipe_doc_counter", String(next));
+    return next;
+  } catch { return 1; }
+}
 
 export interface CompanyInfo {
   companyName: string;
@@ -49,12 +65,15 @@ interface PdfData {
   meshPrice: number;
   stainlessPrice: number;
   zincPrice065: number;
+  gasClassicPrice?: number;
+  gasModernPrice?: number;
   capModel: CapModel;
   boxModel: BoxModel;
   flashingModel: FlashingModel;
   selectedAddons: AddonId[];
   discount: number;
   itemDiscounts?: Record<string, number>;
+  customItemPrices?: Record<string, number>;
   comment: string;
   company: CompanyInfo;
   companyDefaults?: CompanyDefaults;
@@ -63,7 +82,7 @@ interface PdfData {
 export async function generateCommercialPdf(data: PdfData) {
   const container = document.createElement("div");
   container.style.cssText =
-    "position:fixed;left:-9999px;top:0;width:800px;background:#fff;color:#222;";
+    "position:fixed;left:-9999px;top:0;width:794px;background:#fff;color:#1a1a1a;font-family:Arial,Helvetica,sans-serif;";
 
   const fmt = (n: number) => new Intl.NumberFormat("ru-RU").format(Math.round(n)) + " ₽";
 
@@ -74,24 +93,34 @@ export async function generateCommercialPdf(data: PdfData) {
   interface Row { name: string; price: number; key: string; image?: string }
   const rows: Row[] = [];
 
-  if (capModel !== "custom") {
+  const customItemPrices = data.customItemPrices || {};
+  const isBuiltInCap = capModels.some(c => c.id === capModel);
+  const isBuiltInBox = boxModels.some(b => b.id === boxModel);
+  const isBuiltInFlashing = flashingModels.some(f => f.id === flashingModel);
+
+  if (capModel !== "custom" && isBuiltInCap) {
     const info = capModels.find(c => c.id === capModel);
     const name = resolveModelName("cap", capModel, info?.name ?? "");
     rows.push({ key: "cap", name: `Колпак: ${name}`, price: calcCapPrice(capModel, X, Y, metalPrice), image: resolveProductImage("cap", capModel) });
   } else {
-    rows.push({ key: "cap", name: "Колпак: по эскизу", price: 0 });
+    const name = capModel === "custom" ? "по эскизу" : resolveModelName("cap", capModel, capModel);
+    rows.push({ key: "cap", name: `Колпак: ${name}`, price: customItemPrices.cap || 0, image: resolveProductImage("cap", capModel) });
   }
 
-  if (boxModel !== "none") {
+  if (boxModel !== "none" && isBuiltInBox) {
     const info = boxModels.find(b => b.id === boxModel);
     const name = resolveModelName("box", boxModel, info?.name ?? "");
     rows.push({ key: "box", name: `Короб: ${name}`, price: calcBoxPrice(boxModel, X, Y, H, metalPrice), image: resolveProductImage("box", boxModel) });
+  } else if (boxModel !== "none") {
+    rows.push({ key: "box", name: `Короб: ${resolveModelName("box", boxModel, boxModel)}`, price: customItemPrices.box || 0, image: resolveProductImage("box", boxModel) });
   }
 
-  if (flashingModel !== "none") {
+  if (flashingModel !== "none" && isBuiltInFlashing) {
     const info = flashingModels.find(f => f.id === flashingModel);
     const name = resolveModelName("flashing", flashingModel, info?.name ?? "");
     rows.push({ key: "flashing", name: `Оклад: ${name}`, price: calcFlashingPrice(flashingModel, X, Y, metalPrice), image: resolveProductImage("flashing", flashingModel) });
+  } else if (flashingModel !== "none") {
+    rows.push({ key: "flashing", name: `Оклад: ${resolveModelName("flashing", flashingModel, flashingModel)}`, price: customItemPrices.flashing || 0, image: resolveProductImage("flashing", flashingModel) });
   }
 
   selectedAddons.forEach(id => {
@@ -100,197 +129,208 @@ export async function generateCommercialPdf(data: PdfData) {
       rows.push({
         key: `addon_${id}`,
         name: opt.name,
-        price: calcAddonPrice(id, capModel, X, Y, H, metalPrice, meshPrice, stainlessPrice, zincPrice065),
+        price: calcAddonPrice(id, capModel, X, Y, H, metalPrice, meshPrice, stainlessPrice, zincPrice065, data.gasClassicPrice, data.gasModernPrice),
       });
     }
   });
 
   const itemDiscounts = data.itemDiscounts || {};
-  const totalAfterItemDiscounts = rows.reduce((s, r) => {
-    const d = itemDiscounts[(r as any).key] || 0;
-    return s + r.price * (1 - d / 100);
+  const totalPrice = rows.reduce((s, r) => s + r.price, 0);
+  const totalItemDiscRub = rows.reduce((s, r) => {
+    const d = itemDiscounts[r.key] || 0;
+    return s + r.price * d / 100;
   }, 0);
-  const total = rows.reduce((s, r) => s + r.price, 0);
-  const discountedTotal = totalAfterItemDiscounts * (1 - (data.discount || 0) / 100);
+  const afterItemDisc = totalPrice - totalItemDiscRub;
+  const globalDiscRub = afterItemDisc * (data.discount || 0) / 100;
+  const discountedTotal = afterItemDisc - globalDiscRub;
   const hasDiscount = (data.discount || 0) > 0 || Object.values(itemDiscounts).some(v => v > 0);
+  const showDiscCols = hasDiscount;
+
   const co = data.company;
   const cd = data.companyDefaults;
-  const hasOurCompany = cd && (cd.companyName || cd.phone || cd.email);
   const hasClient = co.companyName || co.contactPerson || co.phone || co.email;
-  const dateStr = new Date().toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" });
 
-  const accentDark = "#5C1A1A";
-  const accentMid = "#8B2525";
-  const accentLight = "#F9F2F2";
-  const borderColor = "#E8D5D5";
+  const docNumber = getNextDocNumber();
+  const dateStr = new Date().toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" });
+  const diagramUrl = window.location.origin + "/calculator/measurement-diagram.jpg";
+  const rowImages = rows.filter(r => r.image);
+  const supplierDetails = cd ? [
+    cd.companyName,
+    cd.inn ? `ИНН ${cd.inn}` : "",
+    cd.address,
+    cd.phone,
+    cd.email,
+    cd.website,
+  ].filter(Boolean) : [];
+
+  const brd = "#cccccc";
+  const brdLight = "#e8e8e8";
 
   container.innerHTML = `
-    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Source+Sans+3:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <div style="font-family:'Source Sans 3',sans-serif;padding:0;">
+    <div class="pdf-page" style="width:794px;min-height:1123px;box-sizing:border-box;padding:32px 48px 24px;background:#fff;">
 
-      <!-- HEADER -->
-      <div style="background:linear-gradient(135deg, ${accentDark} 0%, ${accentMid} 100%);padding:32px 40px;display:flex;align-items:center;justify-content:space-between;">
-        <div style="display:flex;align-items:center;gap:20px;">
-          ${cd?.logoDataUrl ? `<img src="${cd.logoDataUrl}" style="height:50px;max-width:140px;object-fit:contain;border-radius:4px;" />` : ""}
-          <div>
-            <div style="font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:#fff;letter-spacing:-0.02em;">
-              КОММЕРЧЕСКОЕ ПРЕДЛОЖЕНИЕ
+      <!-- HEADER: logo box | title | number/date -->
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:18px;">
+
+        <!-- Logo box -->
+        <div style="padding:10px 14px;min-width:160px;min-height:82px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+          ${cd?.logoDataUrl
+            ? `<img src="${cd.logoDataUrl}" style="max-height:70px;max-width:150px;object-fit:contain;" />`
+            : `<div style="font-size:11px;color:#aaa;">Логотип</div>`}
+        </div>
+
+        <!-- Title -->
+        <div style="flex:1;text-align:center;padding:10px 24px 0;">
+          <div style="font-size:20px;font-weight:700;letter-spacing:1px;text-transform:uppercase;">КОММЕРЧЕСКОЕ ПРЕДЛОЖЕНИЕ</div>
+          ${hasClient && co.companyName ? `<div style="font-size:11px;color:#555;margin-top:8px;">Для: <b>${co.companyName}</b>${co.contactPerson ? ` · ${co.contactPerson}` : ""}${co.phone ? ` · ${co.phone}` : ""}</div>` : ""}
+        </div>
+
+        <!-- Number + date -->
+        <div style="text-align:right;padding-top:4px;min-width:110px;flex-shrink:0;">
+          <div style="font-weight:700;font-size:14px;">№ ${docNumber}</div>
+          <div style="font-size:12px;color:#555;margin-top:3px;">${dateStr}</div>
+        </div>
+      </div>
+
+      <!-- Horizontal rule -->
+      <div style="border-top:1.5px solid #1a1a1a;margin-bottom:20px;"></div>
+
+      ${supplierDetails.length > 0 ? `
+      <div style="font-size:10px;color:#555;line-height:1.55;margin:-8px 0 18px;text-align:right;">
+        ${supplierDetails.map(item => `<div>${item}</div>`).join("")}
+      </div>` : ""}
+
+      <!-- ПАРАМЕТРЫ ИЗДЕЛИЯ -->
+      <div style="margin-bottom:22px;">
+        <div style="font-size:13px;font-weight:700;border-bottom:1px solid ${brd};padding-bottom:5px;margin-bottom:14px;">Параметры изделия</div>
+        <div style="display:flex;gap:20px;align-items:flex-start;">
+          <!-- Left: parameter table -->
+          <table style="font-size:12px;border-collapse:collapse;line-height:1.9;flex:1;">
+            <tr>
+              <td style="color:#555;width:200px;">Размеры (X × Y × H)</td>
+              <td style="font-weight:700;">${X} × ${Y} × ${H} мм</td>
+            </tr>
+            <tr>
+              <td style="color:#555;">Угол кровли</td>
+              <td style="font-weight:700;">${data.roofAngle}°</td>
+            </tr>
+            <tr>
+              <td style="color:#555;">Цвет</td>
+              <td style="font-weight:700;">${data.metalColor}</td>
+            </tr>
+            <tr>
+              <td style="color:#555;">Покрытие</td>
+              <td style="font-weight:700;">${data.metalCoating}</td>
+            </tr>
+          </table>
+
+          <!-- Right: dimension labels + diagram -->
+          <div style="display:flex;align-items:center;gap:16px;flex-shrink:0;">
+            <div style="font-size:13px;font-weight:600;line-height:2.2;color:#1a1a1a;">
+              <div>X – ${X} мм</div>
+              <div>Y – ${Y} мм</div>
+              <div>H – ${H} мм</div>
             </div>
-            ${hasOurCompany ? `<div style="color:rgba(255,255,255,0.7);font-size:12px;margin-top:4px;">${cd!.companyName}</div>` : ""}
+            <img src="${diagramUrl}" crossorigin="anonymous"
+              style="height:110px;width:auto;object-fit:contain;" />
           </div>
-        </div>
-        <div style="text-align:right;color:rgba(255,255,255,0.8);font-size:12px;">
-          <div style="font-weight:600;color:#fff;font-size:13px;">№ ${Date.now().toString().slice(-6)}</div>
-          <div style="margin-top:2px;">${dateStr}</div>
         </div>
       </div>
 
-      <div style="padding:32px 40px;">
-
-        <!-- OUR COMPANY + CLIENT -->
-        <div style="display:flex;gap:24px;margin-bottom:28px;">
-          ${hasOurCompany ? `
-          <div style="flex:1;background:${accentLight};border:1px solid ${borderColor};border-radius:8px;padding:16px 20px;">
-            <div style="font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:${accentMid};font-weight:600;margin-bottom:8px;">Поставщик</div>
-            ${cd!.companyName ? `<div style="font-weight:700;font-size:14px;color:${accentDark};margin-bottom:4px;">${cd!.companyName}</div>` : ""}
-            ${cd!.inn ? `<div style="font-size:12px;color:#666;">ИНН: ${cd!.inn}</div>` : ""}
-            ${cd!.address ? `<div style="font-size:12px;color:#666;">${cd!.address}</div>` : ""}
-            ${cd!.phone ? `<div style="font-size:12px;color:#666;">Тел: ${cd!.phone}</div>` : ""}
-            ${cd!.email ? `<div style="font-size:12px;color:#666;">${cd!.email}</div>` : ""}
-            ${cd!.website ? `<div style="font-size:12px;color:${accentMid};">${cd!.website}</div>` : ""}
-          </div>` : ""}
-          ${hasClient ? `
-          <div style="flex:1;background:#FAFAFA;border:1px solid #E5E5E5;border-radius:8px;padding:16px 20px;">
-            <div style="font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:#888;font-weight:600;margin-bottom:8px;">Заказчик</div>
-            ${co.companyName ? `<div style="font-weight:700;font-size:14px;color:#222;margin-bottom:4px;">${co.companyName}</div>` : ""}
-            ${co.contactPerson ? `<div style="font-size:12px;color:#666;">Контактное лицо: ${co.contactPerson}</div>` : ""}
-            ${co.phone ? `<div style="font-size:12px;color:#666;">Тел: ${co.phone}</div>` : ""}
-            ${co.email ? `<div style="font-size:12px;color:#666;">Email: ${co.email}</div>` : ""}
-          </div>` : ""}
-        </div>
-
-        <!-- PARAMETERS -->
-        <div style="margin-bottom:28px;">
-          <div style="font-family:'Playfair Display',serif;font-size:15px;font-weight:600;color:${accentDark};border-bottom:2px solid ${borderColor};padding-bottom:6px;margin-bottom:14px;">
-            Параметры изделия
-          </div>
-          <table style="width:100%;font-size:13px;border-collapse:collapse;">
-            <tr>
-              <td style="padding:5px 0;color:#888;width:200px;">Размеры (X × Y × H)</td>
-              <td style="padding:5px 0;font-weight:600;">${X} × ${Y} × ${H} мм</td>
-              <td style="padding:5px 0;color:#888;width:160px;">Угол кровли</td>
-              <td style="padding:5px 0;font-weight:600;">${data.roofAngle}°</td>
+      <!-- СПЕЦИФИКАЦИЯ -->
+      <div style="margin-bottom:22px;">
+        <div style="font-size:13px;font-weight:700;border-bottom:1px solid ${brd};padding-bottom:5px;margin-bottom:14px;">Спецификация</div>
+        <table style="width:100%;font-size:12px;border-collapse:collapse;">
+          <thead>
+            <tr style="border-bottom:1.5px solid #999;">
+              <th style="text-align:left;padding:7px 8px;font-weight:700;width:28px;">№</th>
+              <th style="text-align:left;padding:7px 8px;font-weight:700;">Наименование</th>
+              ${showDiscCols ? `
+              <th style="text-align:right;padding:7px 8px;font-weight:700;width:100px;">Цена</th>
+              <th style="text-align:right;padding:7px 8px;font-weight:700;width:90px;">Скидка</th>` : ""}
+              <th style="text-align:right;padding:7px 8px;font-weight:700;width:110px;">Стоимость</th>
             </tr>
-            <tr>
-              <td style="padding:5px 0;color:#888;">Покрытие</td>
-              <td style="padding:5px 0;font-weight:600;">${data.metalCoating}</td>
-              <td style="padding:5px 0;color:#888;">Цвет</td>
-              <td style="padding:5px 0;font-weight:600;">${data.metalColor}</td>
+          </thead>
+          <tbody>
+            ${rows.map((r, i) => {
+              const iDisc = itemDiscounts[r.key] || 0;
+              const discRub = r.price * iDisc / 100;
+              const sum = r.price - discRub;
+              return `
+              <tr style="border-bottom:1px solid ${brdLight};">
+                <td style="padding:8px 8px;">${i + 1}</td>
+                <td style="padding:8px 8px;font-weight:600;">${r.name}</td>
+                ${showDiscCols ? `
+                <td style="padding:8px 8px;text-align:right;color:#555;">${r.price > 0 ? fmt(r.price) : "—"}</td>
+                <td style="padding:8px 8px;text-align:right;color:#555;">${discRub > 0 ? `−${fmt(discRub)}` : "—"}</td>` : ""}
+                <td style="padding:8px 8px;text-align:right;font-weight:600;">${r.price > 0 ? fmt(showDiscCols ? sum : r.price) : "—"}</td>
+              </tr>`;
+            }).join("")}
+          </tbody>
+          <tfoot>
+            ${showDiscCols && totalItemDiscRub > 0 && (data.discount || 0) === 0 ? "" : ""}
+            ${showDiscCols && (data.discount || 0) > 0 ? `
+            <tr style="border-top:1px solid ${brd};">
+              <td colspan="${showDiscCols ? 4 : 2}" style="padding:6px 8px;text-align:right;color:#555;font-size:11px;">Общая скидка ${data.discount}%:</td>
+              <td style="padding:6px 8px;text-align:right;color:#555;font-size:11px;">−${fmt(globalDiscRub)}</td>
+            </tr>` : ""}
+            <tr style="border-top:1.5px solid #999;">
+              <td colspan="${showDiscCols ? 4 : 2}" style="padding:9px 8px;text-align:right;font-weight:700;font-size:13px;">ИТОГО:</td>
+              <td style="padding:9px 8px;text-align:right;font-weight:700;font-size:14px;">${fmt(hasDiscount ? discountedTotal : totalPrice)}</td>
             </tr>
-          </table>
+          </tfoot>
+        </table>
+      </div>
+
+      ${data.comment ? `
+      <div style="margin-bottom:16px;padding:10px 14px;border-left:2px solid #999;background:#f9f9f9;">
+        <div style="font-size:11px;color:#333;line-height:1.6;">${data.comment}</div>
+      </div>` : ""}
+
+      <!-- FOOTER -->
+      <div style="border-top:1px solid ${brd};padding-top:10px;display:flex;justify-content:space-between;align-items:flex-end;">
+        <div style="font-size:9px;color:#888;line-height:1.7;">
+          Данное коммерческое предложение носит информационный характер<br>и не является публичной офертой.
         </div>
-
-        <!-- TABLE -->
-        <div style="margin-bottom:24px;">
-          <div style="font-family:'Playfair Display',serif;font-size:15px;font-weight:600;color:${accentDark};border-bottom:2px solid ${borderColor};padding-bottom:6px;margin-bottom:14px;">
-            Спецификация
-          </div>
-          <table style="width:100%;font-size:13px;border-collapse:collapse;">
-            <thead>
-              <tr style="background:${accentLight};">
-                <th style="text-align:left;padding:10px 12px;border-bottom:2px solid ${borderColor};color:${accentDark};font-weight:600;width:36px;">№</th>
-                <th style="text-align:left;padding:10px 12px;border-bottom:2px solid ${borderColor};color:${accentDark};font-weight:600;">Наименование</th>
-                <th style="text-align:right;padding:10px 12px;border-bottom:2px solid ${borderColor};color:${accentDark};font-weight:600;width:80px;">Скидка</th>
-                <th style="text-align:right;padding:10px 12px;border-bottom:2px solid ${borderColor};color:${accentDark};font-weight:600;width:140px;">Стоимость</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${rows.map((r, i) => {
-                const iDisc = itemDiscounts[r.key] || 0;
-                const discPrice = r.price * (1 - iDisc / 100);
-                const imgHtml = r.image ? `<img src="${r.image}" style="width:40px;height:40px;object-fit:contain;border-radius:4px;border:1px solid #EEE;background:#fafafa;flex-shrink:0;" />` : `<div style="width:40px;height:40px;flex-shrink:0;"></div>`;
-                return `
-                <tr style="${i % 2 === 1 ? `background:${accentLight};` : ""}">
-                  <td style="padding:10px 12px;border-bottom:1px solid #EEE;color:#888;">${i + 1}</td>
-                  <td style="padding:10px 12px;border-bottom:1px solid #EEE;font-weight:500;">
-                    <div style="display:flex;align-items:center;gap:10px;">
-                      ${imgHtml}
-                      <span>${r.name}</span>
-                    </div>
-                  </td>
-                  <td style="padding:10px 12px;border-bottom:1px solid #EEE;text-align:right;color:#888;">${iDisc > 0 ? `${iDisc}%` : "—"}</td>
-                  <td style="padding:10px 12px;border-bottom:1px solid #EEE;text-align:right;font-weight:600;">${r.price > 0 ? (iDisc > 0 ? `<span style="text-decoration:line-through;color:#aaa;font-size:11px;">${fmt(r.price)}</span><br>${fmt(discPrice)}` : fmt(r.price)) : "—"}</td>
-                </tr>`;
-              }).join("")}
-
-
-              <tr style="background:${accentLight};">
-                <td colspan="3" style="padding:12px;text-align:right;font-weight:700;font-size:14px;color:${accentDark};border-top:2px solid ${borderColor};">ИТОГО:</td>
-                <td style="padding:12px;text-align:right;font-weight:700;font-size:16px;color:${accentDark};border-top:2px solid ${borderColor};">${fmt(totalAfterItemDiscounts)}</td>
-              </tr>
-              ${hasDiscount ? `
-              ${(data.discount || 0) > 0 ? `<tr>
-                <td colspan="3" style="padding:8px 12px;text-align:right;color:#888;font-size:13px;">Общая скидка ${data.discount}%</td>
-                <td style="padding:8px 12px;text-align:right;color:#888;font-size:13px;">−${fmt(totalAfterItemDiscounts - discountedTotal)}</td>
-              </tr>` : ""}
-              <tr style="background:linear-gradient(135deg, ${accentDark}, ${accentMid});">
-                <td colspan="3" style="padding:14px 12px;text-align:right;font-weight:700;font-size:15px;color:#fff;border-radius:0 0 0 8px;">ИТОГО СО СКИДКОЙ:</td>
-                <td style="padding:14px 12px;text-align:right;font-weight:700;font-size:18px;color:#fff;border-radius:0 0 8px 0;">${fmt(discountedTotal)}</td>
-              </tr>` : ""}
-            </tbody>
-          </table>
-        </div>
-
-        ${data.comment ? `
-        <div style="background:${accentLight};border-left:3px solid ${accentMid};border-radius:0 6px 6px 0;padding:12px 18px;margin-bottom:24px;">
-          <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:${accentMid};font-weight:600;margin-bottom:4px;">Комментарий</div>
-          <div style="font-size:13px;color:#444;line-height:1.5;">${data.comment}</div>
+        ${cd && (cd.phone || cd.email) ? `
+        <div style="text-align:right;font-size:10px;color:#555;">
+          ${cd.phone ? `<div>${cd.phone}</div>` : ""}
+          ${cd.email ? `<div>${cd.email}</div>` : ""}
         </div>` : ""}
-
-        <!-- FOOTER -->
-        <div style="border-top:1px solid #E5E5E5;padding-top:16px;display:flex;justify-content:space-between;align-items:center;">
-          <div style="font-size:10px;color:#AAA;line-height:1.6;">
-            Данное коммерческое предложение носит информационный характер<br>и не является публичной офертой.
-          </div>
-          ${hasOurCompany ? `
-          <div style="text-align:right;font-size:11px;color:#888;">
-            ${cd!.phone ? `<span>${cd!.phone}</span>` : ""}
-            ${cd!.email ? `<span style="margin-left:16px;">${cd!.email}</span>` : ""}
-          </div>` : ""}
-        </div>
       </div>
+
     </div>
+
+    ${rowImages.length > 0 ? `
+    <div class="pdf-page" style="width:794px;min-height:1123px;box-sizing:border-box;padding:32px 48px 24px;background:#fff;">
+      <div style="font-size:13px;font-weight:700;border-bottom:1px solid ${brd};padding-bottom:5px;margin-bottom:18px;">Внешний вид изделий</div>
+      <div style="display:grid;grid-template-columns:1fr;gap:18px;">
+        ${rowImages.map(r => `
+        <div style="break-inside:avoid;page-break-inside:avoid;">
+          <div style="border:1px solid ${brd};padding:14px;text-align:center;border-radius:3px;height:260px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;">
+            <img src="${r.image}" style="max-width:100%;max-height:230px;object-fit:contain;" />
+          </div>
+          <div style="text-align:center;font-size:11px;font-weight:700;padding:7px 0;">${r.name}</div>
+        </div>`).join("")}
+      </div>
+    </div>` : ""}
   `;
 
   document.body.appendChild(container);
-
-  // Wait for fonts to load
   await document.fonts.ready;
   await new Promise(r => setTimeout(r, 200));
 
-  const canvas = await html2canvas(container, { scale: 1.5, useCORS: true, allowTaint: true });
+  const pdf = new jsPDF("p", "mm", "a4");
+  const pages = Array.from(container.querySelectorAll<HTMLElement>(".pdf-page"));
+  for (let i = 0; i < pages.length; i += 1) {
+    const canvas = await html2canvas(pages[i], { scale: 2, useCORS: true, allowTaint: true });
+    const imgData = canvas.toDataURL("image/jpeg", 0.92);
+    const imgWidth = 190;
+    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+    if (i > 0) pdf.addPage();
+    pdf.addImage(imgData, "JPEG", 10, 10, imgWidth, Math.min(imgHeight, 277));
+  }
   document.body.removeChild(container);
 
-  const imgData = canvas.toDataURL("image/jpeg", 0.85);
-  const imgWidth = 190;
-  const imgHeight = (canvas.height * imgWidth) / canvas.width;
-  const pdf = new jsPDF("p", "mm", "a4");
-  const pageHeight = 277;
-  let position = 10;
-
-  if (imgHeight <= pageHeight) {
-    pdf.addImage(imgData, "JPEG", 10, position, imgWidth, imgHeight);
-  } else {
-    let remainingHeight = imgHeight;
-    while (remainingHeight > 0) {
-      pdf.addImage(imgData, "JPEG", 10, position, imgWidth, imgHeight);
-      remainingHeight -= pageHeight;
-      if (remainingHeight > 0) {
-        pdf.addPage();
-        position = -(imgHeight - remainingHeight);
-      }
-    }
-  }
-
-  pdf.save(`КП_${new Date().toLocaleDateString("ru-RU").replace(/\./g, "-")}.pdf`);
+  pdf.save(`КП_${docNumber}_${new Date().toLocaleDateString("ru-RU").replace(/\./g, "-")}.pdf`);
 }

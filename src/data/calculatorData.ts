@@ -1,7 +1,7 @@
 // New pricing data and formulas based on Excel specification
 
 // === Cap Models ===
-export type CapModel = "classic_simple" | "classic_slatted" | "modern_simple" | "modern_slatted" | "custom";
+export type CapModel = string;
 export const capModels: { id: CapModel; name: string; description: string }[] = [
   { id: "classic_simple", name: "Классика простой", description: "Традиционный колпак с гладкой отделкой" },
   { id: "classic_slatted", name: "Классика реечный", description: "Классический колпак с реечным оформлением" },
@@ -11,7 +11,7 @@ export const capModels: { id: CapModel; name: string; description: string }[] = 
 ];
 
 // === Box Models ===
-export type BoxModel = "smooth" | "lamellar" | "none";
+export type BoxModel = string;
 export const boxModels: { id: BoxModel; name: string; description: string }[] = [
   { id: "none", name: "Без короба", description: "Короб не требуется" },
   { id: "smooth", name: "Простой гладкий", description: "Гладкий короб для обхода трубы" },
@@ -19,7 +19,7 @@ export const boxModels: { id: BoxModel; name: string; description: string }[] = 
 ];
 
 // === Flashing Models ===
-export type FlashingModel = "flat" | "profiled" | "none";
+export type FlashingModel = string;
 export const flashingModels: { id: FlashingModel; name: string; description: string }[] = [
   { id: "none", name: "Без оклада", description: "Оклад не требуется" },
   { id: "flat", name: "Для плоских покрытий", description: "Оклад для плоских кровельных покрытий" },
@@ -38,7 +38,7 @@ export const addonOptions: AddonOption[] = [
   { id: "mesh", name: "Сетка от птиц", description: "Защитная сетка от проникновения птиц", appliesTo: "cap" },
   { id: "heatproof", name: "Жаростойкая вставка", description: "Вставка из нержавеющей стали", appliesTo: "cap" },
   { id: "bottom_cap", name: "Нижняя крышка", description: "Нижняя крышка колпака", appliesTo: "cap" },
-  { id: "gas_passthrough", name: "Проходка газового котла", description: "Для классики — 2500 ₽, для модерна — 1800 ₽", appliesTo: "cap" },
+  { id: "gas_passthrough", name: "Проходка газового котла", description: "Цена задаётся в настройках", appliesTo: "cap" },
   { id: "mount_frame", name: "Установочная рамка", description: "Рамка для монтажа короба", appliesTo: "box" },
   { id: "mount_skeleton", name: "Установочный каркас", description: "Несущий каркас для монтажа короба", appliesTo: "box" },
 ];
@@ -190,7 +190,7 @@ function evalFormula(expr: string, vars: Record<string, number>): number {
 // Formulas are stored as JS expressions in localStorage and evaluated dynamically.
 
 export function calcCapPrice(model: CapModel, X: number, Y: number, metalPrice: number): number {
-  if (model === "custom") return 0;
+  if (model === "custom" || !capModels.some(m => m.id === model)) return 0;
   const co = getStoredCoefficients();
   const fs = getStoredFormulaStrings();
   const key = `cap_${model}` as keyof FormulaStrings;
@@ -199,7 +199,7 @@ export function calcCapPrice(model: CapModel, X: number, Y: number, metalPrice: 
 }
 
 export function calcBoxPrice(model: BoxModel, X: number, Y: number, H: number, metalPrice: number): number {
-  if (model === "none") return 0;
+  if (model === "none" || !boxModels.some(m => m.id === model)) return 0;
   const co = getStoredCoefficients();
   const fs = getStoredFormulaStrings();
   const key = `box_${model}` as keyof FormulaStrings;
@@ -208,7 +208,7 @@ export function calcBoxPrice(model: BoxModel, X: number, Y: number, H: number, m
 }
 
 export function calcFlashingPrice(model: FlashingModel, X: number, Y: number, metalPrice: number): number {
-  if (model === "none") return 0;
+  if (model === "none" || !flashingModels.some(m => m.id === model)) return 0;
   const co = getStoredCoefficients();
   const fs = getStoredFormulaStrings();
   const key = `flashing_${model}` as keyof FormulaStrings;
@@ -223,9 +223,11 @@ export function calcAddonPrice(
   metalPrice: number,
   meshPrice: number,
   stainlessPrice: number,
-  zincPrice065: number
+  zincPrice065: number,
+  gasClassicPrice = Number(localStorage.getItem("pipe_gas_classic_price")) || 2500,
+  gasModernPrice = Number(localStorage.getItem("pipe_gas_modern_price")) || 1800
 ): number {
-  if (addonId === "gas_passthrough") return capModel.startsWith("classic") ? 2500 : 1800;
+  if (addonId === "gas_passthrough") return capModel.startsWith("classic") ? gasClassicPrice : gasModernPrice;
   const co = getStoredCoefficients();
   const fs = getStoredFormulaStrings();
   const key = `addon_${addonId}` as keyof FormulaStrings;
@@ -255,4 +257,3 @@ export function saveCustomVariables(vars: CustomVariable[]) {
 
 export const formatPrice = (n: number) =>
   new Intl.NumberFormat("ru-RU").format(Math.round(n)) + " ₽";
-

@@ -2,14 +2,13 @@ import { useCalculator } from "@/context/CalculatorContext";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
-import { ArrowRight, Plus, Trash2, Grid3x3, Building2, Upload, Image, ImagePlus, Lock, Package, BookOpen, ChevronDown, Pencil, Check, X, Variable } from "lucide-react";
+import { ArrowRight, Plus, Trash2, Grid3x3, Building2, Upload, Image, ImagePlus, Package, BookOpen, ChevronDown, Pencil, Check, X, Variable, Globe } from "lucide-react";
 import { useState, useRef } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { NumericInput } from "@/components/calculator/DimensionsForm";
 import { toast } from "@/hooks/use-toast";
 import { capModels, boxModels, flashingModels, getCustomVariables, saveCustomVariables, CustomVariable } from "@/data/calculatorData";
 import { defaultCapImages, defaultBoxImages, defaultFlashingImages, getAllModels, getHiddenModels, saveHiddenModels } from "@/components/calculator/ProductSelection";
-import { getPassword, setPassword } from "@/components/PasswordGate";
 import { FormulaEditor } from "@/components/calculator/FormulaEditor";
 
 
@@ -141,52 +140,6 @@ const CustomModelManager = () => {
   );
 };
 
-// === Password Manager ===
-const PasswordManager = () => {
-  const [current, setCurrent] = useState("");
-  const [newPass, setNewPass] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [error, setError] = useState("");
-
-  const handleChange = () => {
-    setError("");
-    if (current !== getPassword()) { setError("Неверный текущий пароль"); return; }
-    if (newPass.length < 3) { setError("Минимум 3 символа"); return; }
-    if (newPass !== confirm) { setError("Пароли не совпадают"); return; }
-    setPassword(newPass);
-    setCurrent(""); setNewPass(""); setConfirm("");
-    toast({ title: "Пароль изменён" });
-  };
-
-  return (
-    <section className="card-soft p-8">
-      <div className="flex items-center gap-2 mb-4">
-        <Lock className="w-5 h-5 text-primary" />
-        <h2 className="text-lg font-bold text-foreground">Смена пароля</h2>
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div>
-          <label className="text-xs font-semibold text-foreground">Текущий пароль</label>
-          <Input type="password" value={current} onChange={(e) => setCurrent(e.target.value)}
-            className="mt-1 bg-muted border-0 rounded-xl" placeholder="••••" />
-        </div>
-        <div>
-          <label className="text-xs font-semibold text-foreground">Новый пароль</label>
-          <Input type="password" value={newPass} onChange={(e) => setNewPass(e.target.value)}
-            className="mt-1 bg-muted border-0 rounded-xl" placeholder="••••" />
-        </div>
-        <div>
-          <label className="text-xs font-semibold text-foreground">Подтверждение</label>
-          <Input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)}
-            className="mt-1 bg-muted border-0 rounded-xl" placeholder="••••"
-            onKeyDown={(e) => { if (e.key === "Enter") handleChange(); }} />
-        </div>
-      </div>
-      {error && <p className="text-sm text-destructive mt-2">{error}</p>}
-      <Button onClick={handleChange} className="mt-3 rounded-xl" size="sm">Сменить пароль</Button>
-    </section>
-  );
-};
 
 // === Custom Names Manager ===
 interface CustomNames {
@@ -806,6 +759,8 @@ interface MaterialPricesSectionProps {
   meshPrice: number; setMeshPrice: (v: number) => void;
   stainlessPrice: number; setStainlessPrice: (v: number) => void;
   zincPrice065: number; setZincPrice065: (v: number) => void;
+  gasClassicPrice: number; setGasClassicPrice: (v: number) => void;
+  gasModernPrice: number; setGasModernPrice: (v: number) => void;
 }
 
 const MaterialPricesSection = ({
@@ -813,6 +768,8 @@ const MaterialPricesSection = ({
   meshPrice, setMeshPrice,
   stainlessPrice, setStainlessPrice,
   zincPrice065, setZincPrice065,
+  gasClassicPrice, setGasClassicPrice,
+  gasModernPrice, setGasModernPrice,
 }: MaterialPricesSectionProps) => {
   const [customVars, setCustomVars] = useState<CustomVariable[]>(getCustomVariables);
   const [newLabel, setNewLabel] = useState("");
@@ -890,6 +847,8 @@ const MaterialPricesSection = ({
     { label: "Цена сетки", varHint: "meshPrice", value: meshPrice, set: setMeshPrice },
     { label: "Цена нержавейки", varHint: "stainlessPrice", value: stainlessPrice, set: setStainlessPrice },
     { label: "Цена цинка 0,65", varHint: "zincPrice065", value: zincPrice065, set: setZincPrice065 },
+    { label: "Проходка котла: классика", varHint: "gasClassicPrice", value: gasClassicPrice, set: setGasClassicPrice },
+    { label: "Проходка котла: модерн", varHint: "gasModernPrice", value: gasModernPrice, set: setGasModernPrice },
   ];
 
   return (
@@ -903,7 +862,7 @@ const MaterialPricesSection = ({
       </p>
 
       {/* Built-in variables */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
         {builtIn.map(f => (
           <div key={f.label}>
             <label className="text-sm font-semibold text-foreground">{f.label}</label>
@@ -1039,6 +998,8 @@ const SettingsPage = () => {
     meshPrice, setMeshPrice,
     stainlessPrice, setStainlessPrice,
     zincPrice065, setZincPrice065,
+    gasClassicPrice, setGasClassicPrice,
+    gasModernPrice, setGasModernPrice,
     priceMatrix, updateMatrixPrice,
     companyDefaults, setCompanyDefaults,
   } = useCalculator();
@@ -1047,7 +1008,28 @@ const SettingsPage = () => {
   const [newColorCode, setNewColorCode] = useState("");
   const [newColorName, setNewColorName] = useState("");
   const [addingColor, setAddingColor] = useState(false);
+  const [savingCompany, setSavingCompany] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleSaveCompanyGlobal = async () => {
+    setSavingCompany(true);
+    try {
+      const r = await fetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(companyDefaults),
+      });
+      if (r.ok) {
+        toast({ title: "Сохранено для всех пользователей" });
+      } else {
+        toast({ title: "Ошибка сохранения", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "Нет подключения к API", variant: "destructive" });
+    } finally {
+      setSavingCompany(false);
+    }
+  };
 
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1086,17 +1068,24 @@ const SettingsPage = () => {
 
       <div className="container max-w-5xl py-8 space-y-6">
 
-        {/* Password */}
-        <PasswordManager />
-
         {/* Company Defaults */}
         <section className="card-soft p-8">
-          <div className="flex items-center gap-2 mb-4">
-            <Building2 className="w-5 h-5 text-primary" />
-            <h2 className="text-lg font-bold text-foreground">Реквизиты компании (для PDF)</h2>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Building2 className="w-5 h-5 text-primary" />
+              <h2 className="text-lg font-bold text-foreground">Реквизиты компании (для PDF)</h2>
+            </div>
+            <Button
+              onClick={handleSaveCompanyGlobal}
+              disabled={savingCompany}
+              className="rounded-full font-bold gap-2"
+            >
+              <Globe className="w-4 h-4" />
+              {savingCompany ? "Сохранение..." : "Сохранить для всех"}
+            </Button>
           </div>
           <p className="text-sm text-muted-foreground mb-5">
-            Эти данные будут автоматически подставляться в коммерческое предложение.
+            Нажмите «Сохранить для всех» чтобы логотип и реквизиты отображались у всех пользователей.
           </p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1175,6 +1164,8 @@ const SettingsPage = () => {
           meshPrice={meshPrice} setMeshPrice={setMeshPrice}
           stainlessPrice={stainlessPrice} setStainlessPrice={setStainlessPrice}
           zincPrice065={zincPrice065} setZincPrice065={setZincPrice065}
+          gasClassicPrice={gasClassicPrice} setGasClassicPrice={setGasClassicPrice}
+          gasModernPrice={gasModernPrice} setGasModernPrice={setGasModernPrice}
         />
 
 

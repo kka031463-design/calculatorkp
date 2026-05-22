@@ -1,28 +1,14 @@
 import { useCalculator } from "@/context/CalculatorContext";
-import { Palette, DollarSign, Info } from "lucide-react";
+import { Palette } from "lucide-react";
 import { motion } from "framer-motion";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { NumericInput } from "./DimensionsForm";
-
 const MetalForm = () => {
   const {
     metalCoating, setMetalCoating, metalColor, setMetalColor,
-    metalPrice, setMetalPrice, meshPrice, setMeshPrice,
-    stainlessPrice, setStainlessPrice, zincPrice065, setZincPrice065,
-    coatings, colors, priceMatrix,
+    coatings, colors,
   } = useCalculator();
-
-  const matrixPrice = priceMatrix[metalCoating]?.[metalColor];
-  const hasMatrixPrice = matrixPrice !== undefined && matrixPrice > 0;
-
-  const priceFields = [
-    { label: "Цена металла", value: metalPrice, setter: setMetalPrice },
-    { label: "Цена сетки", value: meshPrice, setter: setMeshPrice },
-    { label: "Цена нержавейки", value: stainlessPrice, setter: setStainlessPrice },
-    { label: "Цена цинка 0,65", value: zincPrice065, setter: setZincPrice065 },
-  ];
 
   return (
     <motion.div
@@ -65,38 +51,8 @@ const MetalForm = () => {
           </Select>
         </div>
 
-        {hasMatrixPrice && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            className="flex items-center gap-2 text-xs text-muted-foreground bg-primary/5 rounded-lg px-3 py-2"
-          >
-            <Info className="w-3.5 h-3.5 text-primary" />
-            <span>Цена из матрицы: <strong className="text-primary">{matrixPrice} руб</strong></span>
-          </motion.div>
-        )}
       </div>
 
-      {/* Price inputs */}
-      <div className="pt-2 border-t border-border">
-        <div className="flex items-center gap-2 mb-3">
-          <DollarSign className="w-4 h-4 text-accent" />
-          <span className="text-sm font-bold text-foreground">Цены материалов (руб)</span>
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          {priceFields.map((pf) => (
-            <div key={pf.label}>
-              <label className="text-xs text-muted-foreground">{pf.label}</label>
-              <NumericInput
-                value={pf.value}
-                onChange={pf.setter}
-                unit="₽"
-                className="mt-0.5 bg-muted border-0 rounded-xl text-sm h-9 pr-8"
-              />
-            </div>
-          ))}
-        </div>
-      </div>
     </motion.div>
   );
 };

@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
-import { ArrowLeft, FileDown, Trash2, Clock, Building2 } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { ArrowLeft, FileDown, Trash2, Clock, Building2, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
 import { generateCommercialPdf } from "@/utils/generatePdf";
 import type { CompanyInfo } from "@/utils/generatePdf";
+import { useCalculator } from "@/context/CalculatorContext";
 
 export interface HistoryEntry {
   id: string;
@@ -38,8 +39,16 @@ const formatPrice = (n: number) =>
 const History = () => {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState<string | null>(null);
+  const { loadFromPdfData } = useCalculator();
+  const navigate = useNavigate();
 
   useEffect(() => { setEntries(loadHistory()); }, []);
+
+  const handleEdit = (entry: HistoryEntry) => {
+    loadFromPdfData(entry.pdfData);
+    toast({ title: "КП загружено для редактирования" });
+    navigate("/");
+  };
 
   const handleDownload = async (entry: HistoryEntry) => {
     setLoading(entry.id);
@@ -98,6 +107,10 @@ const History = () => {
                 <p className="text-lg font-extrabold text-primary">{formatPrice(entry.totalPrice)}</p>
               </div>
               <div className="flex items-center gap-2 shrink-0">
+                <Button size="sm" variant="outline" onClick={() => handleEdit(entry)}
+                  className="rounded-full font-semibold border-primary/30 text-primary hover:bg-primary/5">
+                  <Pencil className="w-4 h-4 mr-1" /> Изменить
+                </Button>
                 <Button size="sm" onClick={() => handleDownload(entry)} disabled={loading === entry.id}
                   className="gradient-accent text-accent-foreground rounded-full font-bold">
                   <FileDown className="w-4 h-4 mr-1" /> {loading === entry.id ? "..." : "PDF"}
